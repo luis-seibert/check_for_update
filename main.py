@@ -198,6 +198,8 @@ async def write_telegram_message(
     bot_token: str = environ.get("BOT_TOKEN", "")
     user_ids = json.loads(os.environ["USER_IDS"])
 
+    maps_query = "https://www.google.com/maps/search/?api=1&query="
+
     messages = [
         (
             f"New Interesting Listing: \n\n"
@@ -206,7 +208,7 @@ async def write_telegram_message(
             f"Size [m2]: {interesting_listing.get('size_qm', 'N/A')} m²\n"
             f"Base Rent [EUR]: €{interesting_listing.get('base_rent', 'N/A')}\n"
             f"Balcony: {'Yes' if interesting_listing.get('has_balkony', False) else 'No'}\n"
-            f"Address: {interesting_listing.get('address', 'N/A')}\n"
+            f"Address: <a href='{maps_query}{str(interesting_listing.get('address', 'N/A')).replace(' ', '+')}'>{interesting_listing.get('address', 'N/A')}</a>\n"
             f"District: {interesting_listing.get('district', 'N/A')}\n"
             f"Link: {interesting_listing.get('weblink', 'N/A')}\n\n"
         )
@@ -217,7 +219,7 @@ async def write_telegram_message(
         message = "\n".join(messages)
         bot = Bot(token=bot_token)
         for user_id in user_ids:
-            await bot.send_message(chat_id=user_id, text=message)
+            await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML")
 
         logging.info("Message sent successfully!")
     except (telegram.error.TelegramError, ValueError) as e:

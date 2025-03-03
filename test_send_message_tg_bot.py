@@ -9,7 +9,7 @@ if __name__ == "__main__":
         "size_qm": 75.0,
         "base_rent": 1200.0,
         "has_balkony": True,
-        "address": "Some Address",
+        "address": "Karl-Marx-Allee 1",
         "district": "Friedrichshain",
         "weblink": "https://example.com",
     }
