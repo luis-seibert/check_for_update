@@ -24,9 +24,97 @@ URL = "https://inberlinwohnen.de/wohnungsfinder/"
 CSV_FILE = "listings.csv"
 
 # Apartment filters
-MINIMAL_SIZE = 55
+MINIMAL_SIZE = 56
 MAXIMAL_BASE_RENT = 700
 HAS_BALKONY = True
+FORBIDDEN_DISTRICTS = [
+    {
+        "Adlershof",
+        "Alt-Hohenschönhausen",
+        "Altglienicke",
+        "Biesdorf",
+        "Blankenburg",
+        "Blankenfelde",
+        "Bohnsdorf",
+        "Britz",
+        "Buch",
+        "Buckow",
+        # "Charlottenburg",
+        # "Charlottenburg-Nord",
+        # "Dahlem",
+        "Döberitz",
+        "Falkenberg",
+        "Falkenhagener Feld",
+        "Fennpfuhl",
+        "Französisch Buchholz",
+        "Friedenau",
+        "Friedrichsfelde",
+        "Friedrichshagen",
+        # "Friedrichshain",
+        "Gatow",
+        "Gropiusstadt",
+        "Grünau",
+        # "Grunewald",
+        "Hakenfelde",
+        # "Halensee",
+        "Haselhorst",
+        # "Heerstraße",
+        "Heinersdorf",
+        "Hellersdorf",
+        "Hermsdorf",
+        "Johannisthal",
+        "Karlshorst",
+        "Karow",
+        "Kaulsdorf",
+        "Kladow",
+        "Konradshöhe",
+        "Köpenick",
+        "Lankwitz",
+        # "Lichtenberg",
+        "Lichtenrade",
+        # "Lichterfelde",
+        "Mahlsdorf",
+        "Malchow",
+        "Mariendorf",
+        "Marienfelde",
+        "Märkisches Viertel",
+        "Marzahn",
+        "Müggelheim",
+        "Neu-Hohenschönhausen",
+        # "Neukölln",
+        "Niederschönhausen",
+        "Nikolassee",
+        "Oberschöneweide",
+        # "Pankow",
+        "Pichelsdorf",
+        "Plänterwald",
+        # "Prenzlauer Berg",
+        "Rahnsdorf",
+        # "Reinickendorf",
+        "Rosenthal",
+        "Rudow",
+        "Rummelsburg",
+        # "Schmargendorf",
+        "Schmöckwitz",
+        # "Schöneberg",
+        "Siemensstadt",
+        "Spandau",
+        "Staaken",
+        # "Steglitz",
+        "Tegel",
+        # "Tempelhof",
+        "Treptow-Köpenick",
+        "Waidmannslust",
+        "Wartenberg",
+        # "Weißensee",
+        # "Westend",
+        "Wilhelmsruh",
+        "Wilhelmstadt",
+        # "Wilmersdorf",
+        "Wittenau",
+        # "Zehlendorf",
+    },
+]
 
 # listing web element
 FLAT_ELEMENT = "//li[contains(@class, 'tb-merkflat')]"
@@ -244,7 +332,10 @@ def monitor_changes(sleep_interval: int = 300):
         ]
 
         if new_unique_listings:
-            logging.info("New listings found: %s", new_unique_listings)
+            logging.info(
+                "New listings found: %s",
+                [listing["listing_id"] for listing in new_unique_listings],
+            )
             save_listings_to_csv(new_unique_listings)
 
             new_relevant_listings = []
@@ -254,8 +345,14 @@ def monitor_changes(sleep_interval: int = 300):
                 base_rent_criterion = (
                     float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
                 )
+                district_criterion = new_listing["district"] not in FORBIDDEN_DISTRICTS
                 balkony_criterion = new_listing["has_balkony"] == HAS_BALKONY
-                if size_criterion and base_rent_criterion and balkony_criterion:
+                if (
+                    size_criterion
+                    and base_rent_criterion
+                    and balkony_criterion
+                    and district_criterion
+                ):
                     new_relevant_listings.append(new_listing)
 
             asyncio.run(write_telegram_message(new_relevant_listings))
@@ -271,5 +368,5 @@ if __name__ == "__main__":
         if first_time_listings:
             save_listings_to_csv(first_time_listings)
 
-    interval = random.randint(28, 242)
+    interval = random.randint(28, 142)
     monitor_changes(interval)
