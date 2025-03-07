@@ -28,7 +28,6 @@ MINIMAL_SIZE = 56
 MAXIMAL_BASE_RENT = 700
 HAS_BALKONY = True
 FORBIDDEN_DISTRICTS = [
-    {
         "Adlershof",
         "Alt-Hohenschönhausen",
         "Altglienicke",
@@ -113,7 +112,6 @@ FORBIDDEN_DISTRICTS = [
         # "Wilmersdorf",
         "Wittenau",
         # "Zehlendorf",
-    },
 ]
 
 # listing web element
@@ -221,26 +219,33 @@ def get_listing_details(
 def get_listings() -> List[Dict[str, Union[float, str, bool]]]:
     """Scrape listings from the website and return structured data."""
 
-    driver = get_driver()
-    driver.get(URL)
-
-    WebDriverWait(driver, 16).until(
-        EC.presence_of_element_located((By.XPATH, FLAT_ELEMENT))
-    )
-
-    listings = driver.find_elements("xpath", FLAT_ELEMENT)
     structured_listings = []
 
-    for listing in listings:
-        try:
-            details = get_listing_details(listing)
-            structured_listings.append(details)
-        except (ValueError, AttributeError, IndexError) as e:
-            logging.error("Error processing listing: %s", str(e))
+    try:
+        driver = get_driver()
+        driver.get(URL)
 
-    driver.quit()
-    log_last_new_appartment()
-    return structured_listings
+        WebDriverWait(driver, 16).until(
+            EC.presence_of_element_located((By.XPATH, FLAT_ELEMENT))
+        )
+
+        listings = driver.find_elements("xpath", FLAT_ELEMENT)
+
+        for listing in listings:
+            try:
+                details = get_listing_details(listing)
+                structured_listings.append(details)
+            except (ValueError, AttributeError, IndexError) as e:
+                logging.error("Error processing listing: %s", str(e))
+
+        driver.quit()
+        log_last_new_appartment()
+
+        return structured_listings
+
+    except Exception as exception:
+        print(f"Error while loading chrome driver or listing: {exception}")
+        return []
 
 
 def save_listings_to_csv(listings: List[Dict[str, Union[float, str, bool]]]) -> None:
@@ -314,8 +319,12 @@ async def write_telegram_message(
         logging.error("Failed to send message: %s", str(e))
 
 
-def monitor_changes(sleep_interval: int = 300):
+def monitor_changes(sleep_interval: int = 300) -> None:
     """Monitor changes in listings and save new ones to CSV."""
+
+    def is_string_in_list(target: str, string_list: list[str]) -> bool:
+        target = target.strip().lower()
+        return any(item.strip().lower() == target for item in string_list)
 
     while True:
         old_listings = get_listings_from_csv()
@@ -345,7 +354,7 @@ def monitor_changes(sleep_interval: int = 300):
                 base_rent_criterion = (
                     float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
                 )
-                district_criterion = new_listing["district"] not in FORBIDDEN_DISTRICTS
+                district_criterion = not is_string_in_list(new_listing["district"], FORBIDDEN_DISTRICTS)
                 balkony_criterion = new_listing["has_balkony"] == HAS_BALKONY
                 if (
                     size_criterion
