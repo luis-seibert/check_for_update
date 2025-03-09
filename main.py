@@ -25,12 +25,14 @@ CSV_FILE = "listings.csv"
 
 # Apartment filters
 MINIMAL_SIZE = 56
-MAXIMAL_BASE_RENT = 700
+MAXIMAL_BASE_RENT = 800
 HAS_BALKONY = True
 FORBIDDEN_DISTRICTS = [
+    {
         "Adlershof",
         "Alt-Hohenschönhausen",
         "Altglienicke",
+        "Baumschulenweg",
         "Biesdorf",
         "Blankenburg",
         "Blankenfelde",
@@ -112,6 +114,7 @@ FORBIDDEN_DISTRICTS = [
         # "Wilmersdorf",
         "Wittenau",
         # "Zehlendorf",
+    },
 ]
 
 # listing web element
@@ -122,7 +125,6 @@ BALKONY_XPATH = (
 LINK_XPATH = ".//a[@class='org-but']"
 
 
-# Logger
 def setup_logger() -> None:
     """Setup the logger."""
 
@@ -178,7 +180,7 @@ def parse_float(value: str) -> float:
 
 def get_listing_details(
     listing: WebElement,
-) -> Dict[str, Union[float, str, bool, None, Any]]:
+) -> Dict[str, Any]:
     """Extract details from a listing element."""
 
     text = re.split(r", |\| ", listing.text)
@@ -194,6 +196,9 @@ def get_listing_details(
     location = text[-1] if len(text) == 5 else "Unknown"
     balkony = bool(listing.find_elements("xpath", BALKONY_XPATH))
     link = listing.find_element("xpath", LINK_XPATH).get_attribute("href")
+    wbs_required = bool(
+        listing.find_elements(By.XPATH, ".//a[@title='Wohnberechtigungsschein']")
+    )
 
     if size_match and base_rent_match:
         size = parse_float(f"{size_match.group(1)}.{size_match.group(2)}")
@@ -210,45 +215,39 @@ def get_listing_details(
             "district": location,
             "has_balkony": balkony,
             "weblink": link,
+            "wbs_required": wbs_required,
         }
 
     logging.warning("Skipping invalid listing: %s", listing.text)
     return {}
 
 
-def get_listings() -> List[Dict[str, Union[float, str, bool]]]:
+def get_listings() -> List[Dict[str, Any]]:
     """Scrape listings from the website and return structured data."""
 
+    driver = get_driver()
+    driver.get(URL)
+
+    WebDriverWait(driver, 16).until(
+        EC.presence_of_element_located((By.XPATH, FLAT_ELEMENT))
+    )
+
+    listings = driver.find_elements("xpath", FLAT_ELEMENT)
     structured_listings = []
 
-    try:
-        driver = get_driver()
-        driver.get(URL)
+    for listing in listings:
+        try:
+            details = get_listing_details(listing)
+            structured_listings.append(details)
+        except (ValueError, AttributeError, IndexError) as e:
+            logging.error("Error processing listing: %s", str(e))
 
-        WebDriverWait(driver, 16).until(
-            EC.presence_of_element_located((By.XPATH, FLAT_ELEMENT))
-        )
-
-        listings = driver.find_elements("xpath", FLAT_ELEMENT)
-
-        for listing in listings:
-            try:
-                details = get_listing_details(listing)
-                structured_listings.append(details)
-            except (ValueError, AttributeError, IndexError) as e:
-                logging.error("Error processing listing: %s", str(e))
-
-        driver.quit()
-        log_last_new_appartment()
-
-        return structured_listings
-
-    except Exception as exception:
-        print(f"Error while loading chrome driver or listing: {exception}")
-        return []
+    driver.quit()
+    log_last_new_appartment()
+    return structured_listings
 
 
-def save_listings_to_csv(listings: List[Dict[str, Union[float, str, bool]]]) -> None:
+def save_listings_to_csv(listings: List[Dict[str, Any]]) -> None:
     """Save new listings to a CSV file."""
 
     file_exists = os.path.isfile(CSV_FILE)
@@ -284,28 +283,29 @@ def get_listings_from_csv() -> List[Dict[str, Union[str, float, bool]]]:
 
 
 async def write_telegram_message(
-    interesting_listings: List[Dict[str, Union[str, float, bool]]]
+    interesting_listings: List[Dict[str, Any]],
 ) -> None:
     """Write a message to a Telegram user."""
 
     bot_token: str = environ.get("BOT_TOKEN", "")
     user_ids = json.loads(os.environ["USER_IDS"])
 
-    maps_query = "https://www.google.com/maps/search/?api=1&query="
+    def maps_link(address: Any) -> str:
+        return f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
 
     messages = [
         (
-            f"New Interesting Listing: \n\n"
-            f"Listing ID: {interesting_listing.get('listing_id', 'N/A')}\n"
-            f"Rooms: {interesting_listing.get('number_rooms', 'N/A')}\n"
-            f"Size [m2]: {interesting_listing.get('size_qm', 'N/A')} m²\n"
-            f"Base Rent [EUR]: €{interesting_listing.get('base_rent', 'N/A')}\n"
-            f"Balcony: {'Yes' if interesting_listing.get('has_balkony', False) else 'No'}\n"
-            f"Address: <a href='{maps_query}{str(interesting_listing.get('address', 'N/A')).replace(' ', '+')}'>{interesting_listing.get('address', 'N/A')}</a>\n"
-            f"District: {interesting_listing.get('district', 'N/A')}\n"
-            f"Link: {interesting_listing.get('weblink', 'N/A')}\n\n"
+            f"""New Interesting Listing: \n\n
+            Listing ID: {listing.get('listing_id', 'N/A')}\n
+            Rooms: {listing.get('number_rooms', 'N/A')}\n
+            Size [m2]: {listing.get('size_qm', 'N/A')} m²\n
+            Base Rent [EUR]: €{listing.get('base_rent', 'N/A')}\n
+            Balcony: {'Yes' if listing.get('has_balkony', False) else 'No'}\n
+            Address: <a href='{maps_link(listing.get('address', 'N/A'))}'>{listing.get('address', 'N/A')}</a>\n
+            District: {listing.get('district', 'N/A')}\n
+            Link: {listing.get('weblink', 'N/A')}\n\n"""
         )
-        for interesting_listing in interesting_listings
+        for listing in interesting_listings
     ]
 
     try:
@@ -319,12 +319,8 @@ async def write_telegram_message(
         logging.error("Failed to send message: %s", str(e))
 
 
-def monitor_changes(sleep_interval: int = 300) -> None:
+def monitor_changes(sleep_interval: int = 300):
     """Monitor changes in listings and save new ones to CSV."""
-
-    def is_string_in_list(target: str, string_list: list[str]) -> bool:
-        target = target.strip().lower()
-        return any(item.strip().lower() == target for item in string_list)
 
     while True:
         old_listings = get_listings_from_csv()
@@ -354,13 +350,18 @@ def monitor_changes(sleep_interval: int = 300) -> None:
                 base_rent_criterion = (
                     float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
                 )
-                district_criterion = not is_string_in_list(new_listing["district"], FORBIDDEN_DISTRICTS)
+                district_criterion = new_listing["district"] not in FORBIDDEN_DISTRICTS
                 balkony_criterion = new_listing["has_balkony"] == HAS_BALKONY
+                wbs_criterion = (
+                    not new_listing["wbs_required"] or new_listing["number_rooms"] <= 2
+                )
+
                 if (
                     size_criterion
                     and base_rent_criterion
                     and balkony_criterion
                     and district_criterion
+                    and wbs_criterion
                 ):
                     new_relevant_listings.append(new_listing)
 
