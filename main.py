@@ -16,6 +16,7 @@ from os import environ
 from typing import Any, Dict, List, Union
 
 import telegram
+import yaml
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -29,100 +30,16 @@ from webdriver_manager.chrome import ChromeDriverManager
 URL = "https://inberlinwohnen.de/wohnungsfinder/"
 CSV_FILE = "listings.csv"
 
-# Apartment filters
 MINIMAL_SIZE = 56
 MAXIMAL_BASE_RENT = 800
 HAS_BALKONY = True
-FORBIDDEN_DISTRICTS = [
-    "Adlershof",
-    "Alt-Hohenschönhausen",
-    "Altglienicke",
-    "Baumschulenweg",
-    "Biesdorf",
-    "Blankenburg",
-    "Blankenfelde",
-    "Bohnsdorf",
-    "Britz",
-    "Buch",
-    "Buckow",
-    # "Charlottenburg",
-    # "Charlottenburg-Nord",
-    # "Dahlem",
-    "Döberitz",
-    "Falkenberg",
-    "Falkenhagener Feld",
-    "Fennpfuhl",
-    "Französisch Buchholz",
-    "Friedenau",
-    "Friedrichsfelde",
-    "Friedrichshagen",
-    # "Friedrichshain",
-    "Gatow",
-    "Gropiusstadt",
-    "Grünau",
-    # "Grunewald",
-    "Hakenfelde",
-    # "Halensee",
-    "Haselhorst",
-    # "Heerstraße",
-    "Heinersdorf",
-    "Hellersdorf",
-    "Hermsdorf",
-    "Johannisthal",
-    "Karlshorst",
-    "Karow",
-    "Kaulsdorf",
-    "Kladow",
-    "Konradshöhe",
-    "Köpenick",
-    # "Kreuzberg",
-    "Lankwitz",
-    # "Lichtenberg",
-    "Lichtenrade",
-    # "Lichterfelde",
-    "Mahlsdorf",
-    "Malchow",
-    "Mariendorf",
-    "Marienfelde",
-    "Märkisches Viertel",
-    "Marzahn",
-    "Müggelheim",
-    "Neu-Hohenschönhausen",
-    # "Neukölln",
-    "Niederschönhausen",
-    "Nikolassee",
-    "Oberschöneweide",
-    # "Pankow",
-    "Pichelsdorf",
-    "Plänterwald",
-    # "Prenzlauer Berg",
-    "Rahnsdorf",
-    # "Reinickendorf",
-    "Rosenthal",
-    "Rudow",
-    "Rummelsburg",
-    # "Schmargendorf",
-    "Schmöckwitz",
-    # "Schöneberg",
-    "Siemensstadt",
-    "Spandau",
-    "Staaken",
-    # "Steglitz",
-    "Tegel",
-    # "Tempelhof",
-    "Treptow-Köpenick",
-    "Waidmannslust",
-    "Wartenberg",
-    # "Weißensee",
-    # "Westend",
-    "Wilhelmsruh",
-    "Wilhelmstadt",
-    # "Wilmersdorf",
-    "Wittenau",
-    # "Zehlendorf",
-]
+try:
+    with open("forbidden_districts.yaml", encoding="utf-8") as f:
+        FORBIDDEN_DISTRICTS = yaml.safe_load(f)["forbidden_districts"]
+except (yaml.YAMLError, KeyError) as e:
+    logging.error("Error loading forbidden districts: %s", str(e))
+    FORBIDDEN_DISTRICTS = []
 
-# listing web element
 FLAT_ELEMENT = "//li[contains(@class, 'tb-merkflat')]"
 BALKONY_XPATH = (
     ".//span[contains(@class, 'hackerl') and text()='Balkon/Loggia/Terrasse']"
@@ -296,15 +213,21 @@ async def write_telegram_message(
             f"New Interesting Listing: \n\n"
             f"Listing ID: {listing.get('listing_id', 'N/A')}\n"
             f"Rooms: {listing.get('number_rooms', 'N/A')}\n"
-            f"Size [m2]: {listing.get('size_qm', 'N/A')} m²\n"
-            f"Base Rent [EUR]: €{listing.get('base_rent', 'N/A')}\n"
+            f"Size: {listing.get('size_qm', 'N/A')} m²\n"
+            f"Base Rent: €{listing.get('base_rent', 'N/A')}\n"
             f"Balcony: {'Yes' if listing.get('has_balkony', False) else 'No'}\n"
             f"Address: <a href='{_maps_link(address)}'>{listing.get(address)}</a>\n"
             f"District: {listing.get('district', 'N/A')}\n"
             f"Link: {listing.get('weblink', 'N/A')}\n\n"
         )
 
-    messages = [_assemble_message(listing) for listing in interesting_listings]
+    if len(interesting_listings) < 5:
+        messages = [_assemble_message(listing) for listing in interesting_listings]
+    else:
+        messages = [_assemble_message(listing) for listing in interesting_listings[:5]]
+        messages.append(
+            f"and {len(interesting_listings) - 5} more listings were truncated."
+        )
 
     try:
         message = "\n".join(messages)
@@ -339,7 +262,7 @@ def monitor_changes(sleep_interval: int = 300):
                 "New listings found: %s",
                 [listing["listing_id"] for listing in new_listings],
             )
-            # save_listings_to_csv(new_listings) # TODO uncomment line
+            save_listings_to_csv(new_listings)
 
             new_relevant_listings = []
 
