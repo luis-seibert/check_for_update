@@ -1,3 +1,9 @@
+"""
+This script scrapes the appartment website inberlinwohnen/wohnungsfinder
+for new listings and sends a message to a Telegram user if a new listing
+matches the criteria defined in the script.
+"""
+
 import asyncio
 import csv
 import json
@@ -28,93 +34,92 @@ MINIMAL_SIZE = 56
 MAXIMAL_BASE_RENT = 800
 HAS_BALKONY = True
 FORBIDDEN_DISTRICTS = [
-    {
-        "Adlershof",
-        "Alt-Hohenschönhausen",
-        "Altglienicke",
-        "Baumschulenweg",
-        "Biesdorf",
-        "Blankenburg",
-        "Blankenfelde",
-        "Bohnsdorf",
-        "Britz",
-        "Buch",
-        "Buckow",
-        # "Charlottenburg",
-        # "Charlottenburg-Nord",
-        # "Dahlem",
-        "Döberitz",
-        "Falkenberg",
-        "Falkenhagener Feld",
-        "Fennpfuhl",
-        "Französisch Buchholz",
-        "Friedenau",
-        "Friedrichsfelde",
-        "Friedrichshagen",
-        # "Friedrichshain",
-        "Gatow",
-        "Gropiusstadt",
-        "Grünau",
-        # "Grunewald",
-        "Hakenfelde",
-        # "Halensee",
-        "Haselhorst",
-        # "Heerstraße",
-        "Heinersdorf",
-        "Hellersdorf",
-        "Hermsdorf",
-        "Johannisthal",
-        "Karlshorst",
-        "Karow",
-        "Kaulsdorf",
-        "Kladow",
-        "Konradshöhe",
-        "Köpenick",
-        "Lankwitz",
-        # "Lichtenberg",
-        "Lichtenrade",
-        # "Lichterfelde",
-        "Mahlsdorf",
-        "Malchow",
-        "Mariendorf",
-        "Marienfelde",
-        "Märkisches Viertel",
-        "Marzahn",
-        "Müggelheim",
-        "Neu-Hohenschönhausen",
-        # "Neukölln",
-        "Niederschönhausen",
-        "Nikolassee",
-        "Oberschöneweide",
-        # "Pankow",
-        "Pichelsdorf",
-        "Plänterwald",
-        # "Prenzlauer Berg",
-        "Rahnsdorf",
-        # "Reinickendorf",
-        "Rosenthal",
-        "Rudow",
-        "Rummelsburg",
-        # "Schmargendorf",
-        "Schmöckwitz",
-        # "Schöneberg",
-        "Siemensstadt",
-        "Spandau",
-        "Staaken",
-        # "Steglitz",
-        "Tegel",
-        # "Tempelhof",
-        "Treptow-Köpenick",
-        "Waidmannslust",
-        "Wartenberg",
-        # "Weißensee",
-        # "Westend",
-        "Wilhelmsruh",
-        "Wilhelmstadt",
-        # "Wilmersdorf",
-        "Wittenau",
-        # "Zehlendorf",
-    },
+    "Adlershof",
+    "Alt-Hohenschönhausen",
+    "Altglienicke",
+    "Baumschulenweg",
+    "Biesdorf",
+    "Blankenburg",
+    "Blankenfelde",
+    "Bohnsdorf",
+    "Britz",
+    "Buch",
+    "Buckow",
+    # "Charlottenburg",
+    # "Charlottenburg-Nord",
+    # "Dahlem",
+    "Döberitz",
+    "Falkenberg",
+    "Falkenhagener Feld",
+    "Fennpfuhl",
+    "Französisch Buchholz",
+    "Friedenau",
+    "Friedrichsfelde",
+    "Friedrichshagen",
+    # "Friedrichshain",
+    "Gatow",
+    "Gropiusstadt",
+    "Grünau",
+    # "Grunewald",
+    "Hakenfelde",
+    # "Halensee",
+    "Haselhorst",
+    # "Heerstraße",
+    "Heinersdorf",
+    "Hellersdorf",
+    "Hermsdorf",
+    "Johannisthal",
+    "Karlshorst",
+    "Karow",
+    "Kaulsdorf",
+    "Kladow",
+    "Konradshöhe",
+    "Köpenick",
+    # "Kreuzberg",
+    "Lankwitz",
+    # "Lichtenberg",
+    "Lichtenrade",
+    # "Lichterfelde",
+    "Mahlsdorf",
+    "Malchow",
+    "Mariendorf",
+    "Marienfelde",
+    "Märkisches Viertel",
+    "Marzahn",
+    "Müggelheim",
+    "Neu-Hohenschönhausen",
+    # "Neukölln",
+    "Niederschönhausen",
+    "Nikolassee",
+    "Oberschöneweide",
+    # "Pankow",
+    "Pichelsdorf",
+    "Plänterwald",
+    # "Prenzlauer Berg",
+    "Rahnsdorf",
+    # "Reinickendorf",
+    "Rosenthal",
+    "Rudow",
+    "Rummelsburg",
+    # "Schmargendorf",
+    "Schmöckwitz",
+    # "Schöneberg",
+    "Siemensstadt",
+    "Spandau",
+    "Staaken",
+    # "Steglitz",
+    "Tegel",
+    # "Tempelhof",
+    "Treptow-Köpenick",
+    "Waidmannslust",
+    "Wartenberg",
+    # "Weißensee",
+    # "Westend",
+    "Wilhelmsruh",
+    "Wilhelmstadt",
+    # "Wilmersdorf",
+    "Wittenau",
+    # "Zehlendorf",
 ]
 
 # listing web element
@@ -169,57 +174,49 @@ def get_driver() -> webdriver.Chrome:
     return driver
 
 
-def parse_float(value: str) -> float:
-    """Helper function to parse floats with commas."""
-
-    try:
-        return float(value.replace(",", "."))
-    except ValueError:
-        return 0.0
-
-
 def get_listing_details(
     listing: WebElement,
 ) -> Dict[str, Any]:
     """Extract details from a listing element."""
 
-    text = re.split(r", |\| ", listing.text)
-    if len(text) <= 2:
+    def _remove_thousand_separator(value: str) -> str:
+        return value.replace(".", "")
+
+    def _convert_decimal_separator(value: str) -> str:
+        return value.replace(",", ".")
+
+    text_items = re.split(r", |\| ", listing.text)
+    if len(text_items) < 4:
         logging.warning("Skipping invalid listing: %s", listing.text)
         return {}
 
     listing_id = listing.get_attribute("id")
-    rooms = parse_float(re.findall(r"\d+", text[0])[0])
-    size_match = re.search(r"(\d+),(\d+)", text[1])
-    base_rent_match = re.search(r"(\d+),(\d+)", text[2])
-    address = text[3]
-    location = text[-1] if len(text) == 5 else "Unknown"
+    rooms = float(_convert_decimal_separator(text_items[0].split(" ")[0]))
+    size = float(_convert_decimal_separator(text_items[1].split(" ")[0]))
+    base_rent = float(
+        _convert_decimal_separator(
+            _remove_thousand_separator(text_items[2].split(" ")[0])
+        )
+    )
+    address = text_items[3]
+    location = text_items[-1] if len(text_items) == 5 else "Unknown"
     balkony = bool(listing.find_elements("xpath", BALKONY_XPATH))
     link = listing.find_element("xpath", LINK_XPATH).get_attribute("href")
     wbs_required = bool(
         listing.find_elements(By.XPATH, ".//a[@title='Wohnberechtigungsschein']")
     )
 
-    if size_match and base_rent_match:
-        size = parse_float(f"{size_match.group(1)}.{size_match.group(2)}")
-        base_rent = parse_float(
-            f"{base_rent_match.group(1)}.{base_rent_match.group(2)}"
-        )
-
-        return {
-            "listing_id": listing_id,
-            "number_rooms": rooms,
-            "size_qm": size,
-            "base_rent": base_rent,
-            "address": address,
-            "district": location,
-            "has_balkony": balkony,
-            "weblink": link,
-            "wbs_required": wbs_required,
-        }
-
-    logging.warning("Skipping invalid listing: %s", listing.text)
-    return {}
+    return {
+        "listing_id": listing_id,
+        "number_rooms": rooms,
+        "size_qm": size,
+        "base_rent": base_rent,
+        "address": address,
+        "district": location,
+        "has_balkony": balkony,
+        "weblink": link,
+        "wbs_required": wbs_required,
+    }
 
 
 def get_listings() -> List[Dict[str, Any]]:
@@ -290,23 +287,24 @@ async def write_telegram_message(
     bot_token: str = environ.get("BOT_TOKEN", "")
     user_ids = json.loads(os.environ["USER_IDS"])
 
-    def maps_link(address: Any) -> str:
+    def _maps_link(address: Any) -> str:
         return f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
 
-    messages = [
-        (
-            f"""New Interesting Listing: \n\n
-            Listing ID: {listing.get('listing_id', 'N/A')}\n
-            Rooms: {listing.get('number_rooms', 'N/A')}\n
-            Size [m2]: {listing.get('size_qm', 'N/A')} m²\n
-            Base Rent [EUR]: €{listing.get('base_rent', 'N/A')}\n
-            Balcony: {'Yes' if listing.get('has_balkony', False) else 'No'}\n
-            Address: <a href='{maps_link(listing.get('address', 'N/A'))}'>{listing.get('address', 'N/A')}</a>\n
-            District: {listing.get('district', 'N/A')}\n
-            Link: {listing.get('weblink', 'N/A')}\n\n"""
+    def _assemble_message(listing: Dict[str, Any]) -> str:
+        address = listing.get("address", "N/A")
+        return (
+            f"New Interesting Listing: \n\n"
+            f"Listing ID: {listing.get('listing_id', 'N/A')}\n"
+            f"Rooms: {listing.get('number_rooms', 'N/A')}\n"
+            f"Size [m2]: {listing.get('size_qm', 'N/A')} m²\n"
+            f"Base Rent [EUR]: €{listing.get('base_rent', 'N/A')}\n"
+            f"Balcony: {'Yes' if listing.get('has_balkony', False) else 'No'}\n"
+            f"Address: <a href='{_maps_link(address)}'>{listing.get(address)}</a>\n"
+            f"District: {listing.get('district', 'N/A')}\n"
+            f"Link: {listing.get('weblink', 'N/A')}\n\n"
         )
-        for listing in interesting_listings
-    ]
+
+    messages = [_assemble_message(listing) for listing in interesting_listings]
 
     try:
         message = "\n".join(messages)
@@ -320,32 +318,32 @@ async def write_telegram_message(
 
 
 def monitor_changes(sleep_interval: int = 300):
-    """Monitor changes in listings and save new ones to CSV."""
+    """Monitor changes in listings and save new to CSV."""
 
     while True:
         old_listings = get_listings_from_csv()
-        new_listings = get_listings()
-        if not new_listings:
+        current_listings = get_listings()
+        if not current_listings:
             logging.warning("No listings found. Retrying...")
             continue
 
         old_listing_ids = [listing["listing_id"] for listing in old_listings]
-        new_unique_listings = [
+        new_listings = [
             listing
-            for listing in new_listings
+            for listing in current_listings
             if listing["listing_id"] not in old_listing_ids
         ]
 
-        if new_unique_listings:
+        if new_listings:
             logging.info(
                 "New listings found: %s",
-                [listing["listing_id"] for listing in new_unique_listings],
+                [listing["listing_id"] for listing in new_listings],
             )
-            save_listings_to_csv(new_unique_listings)
+            # save_listings_to_csv(new_listings) # TODO uncomment line
 
             new_relevant_listings = []
 
-            for new_listing in new_unique_listings:
+            for new_listing in new_listings:
                 size_criterion = float(new_listing["size_qm"]) >= MINIMAL_SIZE
                 base_rent_criterion = (
                     float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
