@@ -11,6 +11,7 @@ import logging
 import os
 import random
 import re
+import requests
 import time
 from os import environ
 from typing import Any, Dict, List, Union
@@ -92,7 +93,7 @@ def get_driver() -> webdriver.Chrome:
 
 
 def get_listing_details(
-    listing: WebElement,
+        listing: WebElement,
 ) -> Dict[str, Any]:
     """Extract details from a listing element."""
 
@@ -116,14 +117,19 @@ def get_listing_details(
         )
     )
     address = text_items[3]
-    location = text_items[-1] if len(text_items) == 5 else "Unknown"
     balkony = bool(listing.find_elements("xpath", BALKONY_XPATH))
     link = listing.find_element("xpath", LINK_XPATH).get_attribute("href")
     wbs_required = bool(
         listing.find_elements(By.XPATH, ".//a[@title='Wohnberechtigungsschein']")
     )
 
-    return {
+    if len(text_items) == 5:
+        location = text_items[-1]
+    else:
+        location = get_district_from_osm(address + " Berlin")
+        time.sleep(1)
+
+    flat_details = {
         "listing_id": listing_id,
         "number_rooms": rooms,
         "size_qm": size,
@@ -134,6 +140,7 @@ def get_listing_details(
         "weblink": link,
         "wbs_required": wbs_required,
     }
+    return flat_details
 
 
 def get_listings() -> List[Dict[str, Any]]:
@@ -159,6 +166,23 @@ def get_listings() -> List[Dict[str, Any]]:
     driver.quit()
     log_last_new_appartment()
     return structured_listings
+
+
+def get_district_from_osm(address: str) -> str | None:
+    url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json"
+    headers = {
+        "User-Agent": "GeoDecoder"
+    }
+    try:
+        response = requests.get(url, headers=headers)
+        response_json = response.json()
+        osm_address = re.split(", ", response_json[0]["display_name"])
+        osm_district = osm_address[-5]
+        return osm_district
+    except IndexError:
+        return "Unknown"
+    except Exception as e:
+        logging.error(e)
 
 
 def save_listings_to_csv(listings: List[Dict[str, Any]]) -> None:
@@ -197,14 +221,14 @@ def get_listings_from_csv() -> List[Dict[str, Union[str, float, bool]]]:
 
 
 async def write_telegram_message(
-    interesting_listings: List[Dict[str, Any]],
+        interesting_listings: List[Dict[str, Any]],
 ) -> None:
     """Write a message to a Telegram user."""
 
     bot_token: str = environ.get("BOT_TOKEN", "")
     user_ids = json.loads(os.environ["USER_IDS"])
 
-    def _maps_link(address: Any) -> str:
+    def _maps_link(address: str) -> str:
         return f"https://www.google.com/maps/search/?api=1&query={address.replace(' ', '+')}"
 
     def _assemble_message(listing: Dict[str, Any]) -> str:
@@ -216,7 +240,7 @@ async def write_telegram_message(
             f"Size: {listing.get('size_qm', 'N/A')} m²\n"
             f"Base Rent: €{listing.get('base_rent', 'N/A')}\n"
             f"Balcony: {'Yes' if listing.get('has_balkony', False) else 'No'}\n"
-            f"Address: <a href='{_maps_link(address)}'>{listing.get(address)}</a>\n"
+            f"Address: <a href='{_maps_link(address)}'>{address}</a>\n"
             f"District: {listing.get('district', 'N/A')}\n"
             f"Link: {listing.get('weblink', 'N/A')}\n\n"
         )
@@ -269,25 +293,26 @@ def monitor_changes(sleep_interval: int = 300):
             for new_listing in new_listings:
                 size_criterion = float(new_listing["size_qm"]) >= MINIMAL_SIZE
                 base_rent_criterion = (
-                    float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
+                        float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
                 )
                 district_criterion = new_listing["district"] not in FORBIDDEN_DISTRICTS
                 balkony_criterion = new_listing["has_balkony"] == HAS_BALKONY
                 wbs_criterion = (
-                    not new_listing["wbs_required"] or new_listing["number_rooms"] <= 2
+                        not new_listing["wbs_required"] or new_listing["number_rooms"] <= 2
                 )
 
                 if (
-                    size_criterion
-                    and base_rent_criterion
-                    and balkony_criterion
-                    and district_criterion
-                    and wbs_criterion
+                        size_criterion
+                        and base_rent_criterion
+                        and balkony_criterion
+                        and district_criterion
+                        and wbs_criterion
                 ):
                     new_relevant_listings.append(new_listing)
 
-            asyncio.run(write_telegram_message(new_relevant_listings))
-            time.sleep(5)
+            if new_relevant_listings:
+                asyncio.run(write_telegram_message(new_relevant_listings))
+                time.sleep(5)
 
         time.sleep(sleep_interval)
 
