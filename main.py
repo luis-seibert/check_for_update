@@ -1,21 +1,20 @@
 """
-This script scrapes the appartment website inberlinwohnen/wohnungsfinder
-for new listings and sends a message to a Telegram user if a new listing
-matches the criteria defined in the script.
+This script scrapes the appartment website in FLAT_FINDER_URL
+for new listings and sends a message to Telegram users when new listings
+match the criteria defined in the filter options.
 """
 
 import asyncio
 import csv
 import json
-import logging
 import os
 import random
 import re
-import requests
 import time
 from os import environ
 from typing import Any, Dict, List, Union
 
+import requests
 import telegram
 import yaml
 from selenium import webdriver
@@ -27,59 +26,47 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from telegram import Bot
 from webdriver_manager.chrome import ChromeDriverManager
+from logger import Logger
 
-URL = "https://inberlinwohnen.de/wohnungsfinder/"
-CSV_FILE = "listings.csv"
+FLAT_FINDER_URL = os.getenv("FLAT_FINDER_URL")
+FLAT_ELEMENT = os.getenv("FLAT_ELEMENT")
+BALKONY_XPATH = os.getenv("BALKONY_XPATH")
+LINK_XPATH = os.getenv("LINK_XPATH")
+WBS_XPATH = os.getenv("WBS_XPATH")
 
-MINIMAL_SIZE = 56
-MAXIMAL_BASE_RENT = 800
-HAS_BALKONY = True
+MINIMAL_SIZE = os.getenv("MINIMAL_SIZE")
+MAXIMAL_BASE_RENT = os.getenv("MAXIMAL_BASE_RENT")
+HAS_BALKONY = os.getenv("HAS_BALKONY")
+
+DISTRICTS_YAML = "berlin_districts.yaml"
+SCANNED_FLATS_CSV = "listings.csv"
+
+logger = Logger()
 try:
-    with open("forbidden_districts.yaml", encoding="utf-8") as f:
-        FORBIDDEN_DISTRICTS = yaml.safe_load(f)["forbidden_districts"]
+    with open("berlin_districts.yaml", encoding="utf-8") as f:
+        FORBIDDEN_DISTRICTS = yaml.safe_load(f)[0]["forbidden_districts"]
 except (yaml.YAMLError, KeyError) as e:
-    logging.error("Error loading forbidden districts: %s", str(e))
+    logger.log_error(f"Error loading forbidden districts: {e}")
     FORBIDDEN_DISTRICTS = []
 
-FLAT_ELEMENT = "//li[contains(@class, 'tb-merkflat')]"
-BALKONY_XPATH = (
-    ".//span[contains(@class, 'hackerl') and text()='Balkon/Loggia/Terrasse']"
-)
-LINK_XPATH = ".//a[@class='org-but']"
 
+def main():
+    """Main function to scrape listings and monitor changes."""
 
-def setup_logger() -> None:
-    """Setup the logger."""
-
-    logging.basicConfig(
-        format="%(asctime)s - %(message)s",
-        level=logging.INFO,
-    )
-
-    logging.getLogger("selenium").setLevel(logging.WARNING)
-
-
-def log_last_new_appartment() -> None:
-    """Log the time since the last update of listings."""
-
-    current_time = time.time()
-
-    if os.path.exists(CSV_FILE):
-        elapsed_time_since_last_fetch = current_time - time.mktime(
-            time.localtime(os.path.getmtime(CSV_FILE))
-        )
-    else:
-        elapsed_time_since_last_fetch = 0
-
-    logging.info(
-        "Fetched listings. Time since last update: %d minutes",
-        round(elapsed_time_since_last_fetch / 60),
-    )
+    logger.log_info("Starting the main function.")
+    driver = get_driver()
+    interval = random.randint(28, 142)
+    monitor_changes(driver, interval)
 
 
 def get_driver() -> webdriver.Chrome:
-    """Get a headless Chrome driver."""
+    """Get a headless Chrome driver.
 
+    Returns:
+        webdriver.Chrome: Headless Chrome driver.
+    """
+
+    logger.log_info("Initializing Chrome driver.")
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -88,14 +75,22 @@ def get_driver() -> webdriver.Chrome:
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()), options=options
     )
+    logger.log_info("Chrome driver initialized successfully.")
 
     return driver
 
 
 def get_listing_details(
-        listing: WebElement,
+    listing: WebElement,
 ) -> Dict[str, Any]:
-    """Extract details from a listing element."""
+    """Extract details from a listing element.
+
+    Args:
+        listing (WebElement): Listing element to extract details from.
+
+    Returns:
+        Dict[str, Any]: Extracted details from the listing.
+    """
 
     def _remove_thousand_separator(value: str) -> str:
         return value.replace(".", "")
@@ -105,7 +100,7 @@ def get_listing_details(
 
     text_items = re.split(r", |\| ", listing.text)
     if len(text_items) < 4:
-        logging.warning("Skipping invalid listing: %s", listing.text)
+        logger.log_warning(f"Skipping invalid listing: {listing.text}")
         return {}
 
     listing_id = listing.get_attribute("id")
@@ -119,9 +114,7 @@ def get_listing_details(
     address = text_items[3]
     balkony = bool(listing.find_elements("xpath", BALKONY_XPATH))
     link = listing.find_element("xpath", LINK_XPATH).get_attribute("href")
-    wbs_required = bool(
-        listing.find_elements(By.XPATH, ".//a[@title='Wohnberechtigungsschein']")
-    )
+    wbs_required = bool(listing.find_elements(By.XPATH, WBS_XPATH))
 
     if len(text_items) == 5:
         location = text_items[-1]
@@ -143,56 +136,81 @@ def get_listing_details(
     return flat_details
 
 
-def get_listings() -> List[Dict[str, Any]]:
-    """Scrape listings from the website and return structured data."""
+def get_listings(driver: webdriver) -> List[Dict[str, Any]]:
+    """Scrape listings from the website and return structured data.
 
-    driver = get_driver()
-    driver.get(URL)
+    Args:
+        driver (webdriver): Selenium WebDriver instance to scrape listings.
 
+    Returns:
+        List[Dict[str, Any]]: Structured data of listings.
+    """
+
+    logger.log_info("Fetching listings from website.")
+    driver.get(FLAT_FINDER_URL)
     WebDriverWait(driver, 16).until(
         EC.presence_of_element_located((By.XPATH, FLAT_ELEMENT))
     )
-
     listings = driver.find_elements("xpath", FLAT_ELEMENT)
-    structured_listings = []
 
+    structured_listings = []
     for listing in listings:
         try:
             details = get_listing_details(listing)
             structured_listings.append(details)
         except (ValueError, AttributeError, IndexError) as e:
-            logging.error("Error processing listing: %s", str(e))
+            logger.log_error(f"Error processing listing: {str(e)}")
 
-    driver.quit()
-    log_last_new_appartment()
+    logger.log_info(f"Fetched {len(structured_listings)} listings.")
+    logger.log_last_new_appartment(SCANNED_FLATS_CSV)
+
     return structured_listings
 
 
-def get_district_from_osm(address: str) -> str | None:
+def get_district_from_osm(address: str) -> str:
+    """Get the district of an address from OpenStreetMap.
+
+    Args:
+        address (str): Address to get the district from.
+
+    Returns:
+        str: District of the address.
+    """
+
     url = f"https://nominatim.openstreetmap.org/search?q={address}&format=json"
-    headers = {
-        "User-Agent": "GeoDecoder"
-    }
+    headers = {"User-Agent": "GeoDecoder"}
+
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=10)
         response_json = response.json()
         osm_address = re.split(", ", response_json[0]["display_name"])
         osm_district = osm_address[-5]
         return osm_district
+
     except IndexError:
+        logger.log_warning(f"District not found for address: {address}")
         return "Unknown"
+
     except Exception as e:
-        logging.error(e)
+        logger.log_exception(f"Error getting district from OSM: {str(e)}")
+        return "Unknown"
 
 
 def save_listings_to_csv(listings: List[Dict[str, Any]]) -> None:
-    """Save new listings to a CSV file."""
+    """Save new listings to a CSV file.
 
-    file_exists = os.path.isfile(CSV_FILE)
+    Args:
+        listings (List[Dict[str, Any]]): Listings to save to CSV.
+    """
+
+    logger.log_info("Saving listings to CSV.")
+    file_exists = os.path.isfile(SCANNED_FLATS_CSV)
     fieldnames = list(listings[0].keys()) + ["timestamp"]
 
     try:
-        with open(CSV_FILE, mode="a", newline="", encoding="utf-8-sig") as file:
+        with open(
+            SCANNED_FLATS_CSV, mode="a", newline="", encoding="utf-8-sig"
+        ) as file:
             writer = csv.DictWriter(file, fieldnames=fieldnames)
 
             if not file_exists:
@@ -202,28 +220,36 @@ def save_listings_to_csv(listings: List[Dict[str, Any]]) -> None:
             for listing in listings:
                 listing["timestamp"] = timestamp
                 writer.writerow(listing)
+
     except (IOError, csv.Error) as e:
-        logging.error("Error saving listings to CSV: %s", str(e))
+        logger.log_error(f"Error saving listings to CSV: {str(e)}")
 
 
 def get_listings_from_csv() -> List[Dict[str, Union[str, float, bool]]]:
-    """Get listings from the CSV file."""
+    """Get listings from the CSV file.
 
+    Returns:
+        List[Dict[str, Union[str, float, bool]]]: List of flats from CSV.
+    """
+
+    logger.log_info("Reading listings from CSV.")
     listings = []
-
-    if os.path.isfile(CSV_FILE):
+    if os.path.isfile(SCANNED_FLATS_CSV):
         try:
-            with open(CSV_FILE, mode="r", encoding="utf-8-sig") as file:
+            with open(SCANNED_FLATS_CSV, mode="r", encoding="utf-8-sig") as file:
                 listings = list(csv.DictReader(file))
         except (IOError, csv.Error) as e:
-            logging.error("Error reading CSV file: %s", str(e))
+            logger.log_error(f"Error reading CSV file: {str(e)}")
+
     return listings
 
 
-async def write_telegram_message(
-        interesting_listings: List[Dict[str, Any]],
-) -> None:
-    """Write a message to a Telegram user."""
+async def write_telegram_message(interesting_listings: List[Dict[str, Any]]) -> None:
+    """Write a message to a Telegram user.
+
+    Args:
+        interesting_listings (List[Dict[str, Any]]): List of relevant listings.
+    """
 
     bot_token: str = environ.get("BOT_TOKEN", "")
     user_ids = json.loads(os.environ["USER_IDS"])
@@ -258,20 +284,31 @@ async def write_telegram_message(
         bot = Bot(token=bot_token)
         for user_id in user_ids:
             await bot.send_message(chat_id=user_id, text=message, parse_mode="HTML")
+        logger.log_info("Messages sent successfully!")
 
-        logging.info("Message sent successfully!")
     except (telegram.error.TelegramError, ValueError) as e:
-        logging.error("Failed to send message: %s", str(e))
+        logger.log_error(f"Failed to send message: {str(e)}")
 
 
-def monitor_changes(sleep_interval: int = 300):
-    """Monitor changes in listings and save new to CSV."""
+def monitor_changes(driver: webdriver, sleep_interval: int = 300) -> None:
+    """Monitor changes in listings and save new to CSV.
+
+    Args:
+        driver (webdriver): Selenium WebDriver instance to scrape listings.
+        sleep_interval (int, optional): Time to sleep between checks. Defaults to 300.
+    """
+
+    logger.log_info("Starting to monitor changes in listings.")
+    if not os.path.isfile(SCANNED_FLATS_CSV):
+        first_time_listings = get_listings(driver)
+        if first_time_listings:
+            save_listings_to_csv(first_time_listings)
 
     while True:
         old_listings = get_listings_from_csv()
-        current_listings = get_listings()
+        current_listings = get_listings(driver)
         if not current_listings:
-            logging.warning("No listings found. Retrying...")
+            logger.log_warning("No listings found. Retrying...")
             continue
 
         old_listing_ids = [listing["listing_id"] for listing in old_listings]
@@ -282,31 +319,29 @@ def monitor_changes(sleep_interval: int = 300):
         ]
 
         if new_listings:
-            logging.info(
-                "New listings found: %s",
-                [listing["listing_id"] for listing in new_listings],
+            logger.log_info(
+                f"New listings found: {[listing['listing_id'] for listing in new_listings]}"
             )
             save_listings_to_csv(new_listings)
 
             new_relevant_listings = []
-
             for new_listing in new_listings:
                 size_criterion = float(new_listing["size_qm"]) >= MINIMAL_SIZE
                 base_rent_criterion = (
-                        float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
+                    float(new_listing["base_rent"]) <= MAXIMAL_BASE_RENT
                 )
                 district_criterion = new_listing["district"] not in FORBIDDEN_DISTRICTS
                 balkony_criterion = new_listing["has_balkony"] == HAS_BALKONY
                 wbs_criterion = (
-                        not new_listing["wbs_required"] or new_listing["number_rooms"] <= 2
+                    not new_listing["wbs_required"] or new_listing["number_rooms"] <= 2
                 )
 
                 if (
-                        size_criterion
-                        and base_rent_criterion
-                        and balkony_criterion
-                        and district_criterion
-                        and wbs_criterion
+                    size_criterion
+                    and base_rent_criterion
+                    and balkony_criterion
+                    and district_criterion
+                    and wbs_criterion
                 ):
                     new_relevant_listings.append(new_listing)
 
@@ -318,11 +353,4 @@ def monitor_changes(sleep_interval: int = 300):
 
 
 if __name__ == "__main__":
-    setup_logger()
-    if not os.path.isfile(CSV_FILE):
-        first_time_listings = get_listings()
-        if first_time_listings:
-            save_listings_to_csv(first_time_listings)
-
-    interval = random.randint(28, 142)
-    monitor_changes(interval)
+    main()
