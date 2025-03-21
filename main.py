@@ -57,25 +57,25 @@ def main():
     logger.log_info("Starting the main function.")
     driver = get_driver()
 
-    interval = random.randint(28, 142)
-    monitor_changes(driver, interval)
+    monitor_changes(driver)
 
 
-def monitor_changes(driver: webdriver, sleep_interval: int = 300) -> None:
+def monitor_changes(driver: webdriver) -> None:
     """Monitor changes in listings and save new to CSV.
 
     Args:
         driver (webdriver): Selenium WebDriver instance to scrape listings.
-        sleep_interval (int, optional): Time to sleep between checks. Defaults to 300.
     """
 
     logger.log_info("Starting to monitor changes in listings.")
     if not os.path.isfile(SCANNED_FLATS_CSV):
+        logger.log_info("No listings data file found. Creating new...")
         first_time_listings = get_listings(driver)
         if first_time_listings:
             save_listings_to_csv(first_time_listings)
 
     while True:
+        sleep_interval = random.randint(28, 142)
         old_listings = get_listings_from_csv()
         current_listings = get_listings(driver)
         if not current_listings:
@@ -117,8 +117,11 @@ def monitor_changes(driver: webdriver, sleep_interval: int = 300) -> None:
                     new_relevant_listings.append(new_listing)
 
             if new_relevant_listings:
+                logger.log_info(f"Found {len(new_relevant_listings)} new relevant listings.")
                 asyncio.run(write_telegram_message(new_relevant_listings))
                 time.sleep(5)
+            else:
+                logger.log_info("No new relevant listings found.")
         else:
             logger.log_info("No new listings found.")
 
@@ -163,11 +166,13 @@ def get_listings(driver: webdriver) -> list[dict[str, Any]]:
             WebDriverWait(driver, 16).until(
                 EC.presence_of_element_located((By.XPATH, FLAT_ELEMENT))
             )
+            logger.log_info("Driver attached successfully.")
             break
         except TimeoutException as e:
             logger.log_error(f"Error fetching listings: {str(e)}")
             driver = get_driver()
 
+    logger.log_info("Getting flat elements and details...")
     listings = driver.find_elements("xpath", FLAT_ELEMENT)
 
     structured_listings = []
@@ -240,14 +245,14 @@ def get_listing_details(listing: WebElement) -> dict[str, Any]:
     return flat_details
 
 
-def get_district_from_osm(address: str) -> tuple[str, list[str]]:
+def get_district_from_osm(address: str) -> str:
     """Get the district of an address from OpenStreetMap.
 
     Args:
         address (str): Address to get the district from.
 
     Returns:
-        tuple[str, list[str]]: District of the address and updated cache.
+        str: District of the address.
     """
 
     def _save_invalid_addresses(unknown_addresses: list[str]) -> None:
@@ -286,7 +291,7 @@ def get_district_from_osm(address: str) -> tuple[str, list[str]]:
 
 
 def get_unknown_osm_adresses() -> list[str]:
-    """Setup the cache for invalid OSM addresses.
+    """Set the cache for invalid OSM addresses.
 
     Returns:
         list[str]: list of invalid addresses.
@@ -317,7 +322,6 @@ def save_listings_to_csv(listings: list[dict[str, Any]]) -> None:
         listings (list[dict[str, Any]]): Listings to save to CSV.
     """
 
-    logger.log_info("Saving listings to CSV.")
     file_exists = os.path.isfile(SCANNED_FLATS_CSV)
     fieldnames = list(listings[0].keys()) + ["timestamp"]
 
@@ -334,6 +338,7 @@ def save_listings_to_csv(listings: list[dict[str, Any]]) -> None:
             for listing in listings:
                 listing["timestamp"] = timestamp
                 writer.writerow(listing)
+        logger.log_info("Saved listings to CSV.")
 
     except (IOError, csv.Error) as e:
         logger.log_error(f"Error saving listings to CSV: {str(e)}")
@@ -346,12 +351,12 @@ def get_listings_from_csv() -> list[dict[str, str | float | bool]]:
         list[dict[str, list[dict[str, str | float | bool]]: List of flats from CSV.
     """
 
-    logger.log_info("Reading listings from CSV.")
     listings = []
     if os.path.isfile(SCANNED_FLATS_CSV):
         try:
             with open(SCANNED_FLATS_CSV, mode="r", encoding="utf-8-sig") as file:
                 listings = list(csv.DictReader(file))
+            logger.log_info("Read listings from CSV.")
         except (IOError, csv.Error) as e:
             logger.log_error(f"Error reading CSV file: {str(e)}")
 

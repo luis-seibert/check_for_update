@@ -46,6 +46,6 @@ class Logger:
             elapsed_time_since_last_fetch = 0
 
         logging.info(
-            "Fetched listings. Time since last update: %d minutes",
+            "Time since last update: %d minutes",
             round(elapsed_time_since_last_fetch / 60),
         )
